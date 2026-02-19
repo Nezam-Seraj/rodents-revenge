@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rodent's Revenge</title>
+    <meta name="description" content="A modern recreation of the classic Microsoft Rodent's Revenge puzzle game." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;600;700&display=swap"
+        rel="stylesheet" />
+</head>
+
+<body>
+    <div id="app">
+        <!-- Start Screen -->
+        <div id="start-screen" class="overlay">
+            <div class="overlay-panel start-panel">
+                <h1 class="game-title">🐭 Rodent's<br />Revenge</h1>
+                <p class="subtitle">The Classic Puzzle Game</p>
+                <div class="instructions">
+                    <p><strong>HOW TO PLAY</strong></p>
+                    <p>Use <kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> or
+                        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to move the mouse</p>
+                    <p>Push blocks to trap the cats on all 4 sides</p>
+                    <p>Trapped cats turn into cheese — collect it for points!</p>
+                    <p>Avoid cats, yarn balls, and mousetraps</p>
+                </div>
+                <button id="start-btn" class="btn-primary">START GAME</button>
+            </div>
+        </div>
+
+        <!-- HUD -->
+        <div id="hud">
+            <div class="hud-item">
+                <span class="hud-label">SCORE</span>
+                <span id="hud-score" class="hud-value">0</span>
+            </div>
+            <div class="hud-item">
+                <span class="hud-label">LEVEL</span>
+                <span id="hud-level" class="hud-value">1</span>
+            </div>
+            <div class="hud-item">
+                <span class="hud-label">LIVES</span>
+                <span id="hud-lives" class="hud-value">🐭🐭🐭</span>
+            </div>
+            <div class="hud-item timer-item">
+                <span class="hud-label">CAT SPAWN</span>
+                <div class="timer-bar-container">
+                    <div id="timer-bar" class="timer-bar"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Game Canvas -->
+        <div id="game-container">
+            <canvas id="game-canvas"></canvas>
+        </div>
+
+        <!-- Mobile Controls -->
+        <div id="mobile-controls">
+            <div class="dpad">
+                <button class="dpad-btn dpad-up" data-dir="up">▲</button>
+                <div class="dpad-row">
+                    <button class="dpad-btn dpad-left" data-dir="left">◀</button>
+                    <button class="dpad-btn dpad-center"></button>
+                    <button class="dpad-btn dpad-right" data-dir="right">▶</button>
+                </div>
+                <button class="dpad-btn dpad-down" data-dir="down">▼</button>
+            </div>
+        </div>
+
+        <!-- Game Over Overlay -->
+        <div id="gameover-screen" class="overlay hidden">
+            <div class="overlay-panel">
+                <h2 class="gameover-title">GAME OVER</h2>
+                <p class="final-score">Final Score: <span id="final-score">0</span></p>
+                <p class="final-level">Reached Level: <span id="final-level">1</span></p>
+                <button id="restart-btn" class="btn-primary">PLAY AGAIN</button>
+            </div>
+        </div>
+
+        <!-- Level Complete Overlay -->
+        <div id="levelcomplete-screen" class="overlay hidden">
+            <div class="overlay-panel">
+                <h2 class="level-complete-title">🧀 LEVEL COMPLETE! 🧀</h2>
+                <p class="level-score">Score: <span id="level-score">0</span></p>
+                <button id="nextlevel-btn" class="btn-primary">NEXT LEVEL</button>
+            </div>
+        </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+</body>
+
+</html>
