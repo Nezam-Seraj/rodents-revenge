@@ -3,9 +3,17 @@
 
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Rodent's Revenge</title>
     <meta name="description" content="A modern recreation of the classic Microsoft Rodent's Revenge puzzle game." />
+    <meta name="theme-color" content="#a83f22" />
+    <link rel="manifest" href="/rodents-revenge/manifest.json" />
+    <link rel="icon" type="image/png" href="/rodents-revenge/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/rodents-revenge/icons/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Rodent's" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;600;700&display=swap"
@@ -84,7 +92,7 @@
         <!-- Level Complete Overlay -->
         <div id="levelcomplete-screen" class="overlay hidden">
             <div class="overlay-panel">
-                <h2 class="level-complete-title">🧀 LEVEL COMPLETE! 🧀</h2>
+                <h2 class="level-complete-title" id="level-complete-title">🧀 LEVEL COMPLETE! 🧀</h2>
                 <p class="level-score">Score: <span id="level-score">0</span></p>
                 <button id="nextlevel-btn" class="btn-primary">NEXT LEVEL</button>
             </div>

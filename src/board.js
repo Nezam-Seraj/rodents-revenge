@@ -13,6 +13,7 @@ export class Board {
 
     clear() {
         this.grid = [];
+        this.ice = new Set(); // ice tiles live separately from the entity grid
         for (let x = 0; x < this.cols; x++) {
             this.grid[x] = [];
             for (let y = 0; y < this.rows; y++) {
@@ -38,6 +39,15 @@ export class Board {
 
     isEmpty(x, y) {
         return this.inBounds(x, y) && this.grid[x][y] === ENTITY.EMPTY;
+    }
+
+    // Ice is a floor property, tracked separately so it persists under entities.
+    setIce(x, y) {
+        if (this.inBounds(x, y)) this.ice.add(x + ',' + y);
+    }
+
+    isIce(x, y) {
+        return this.ice.has(x + ',' + y);
     }
 
     // Returns {x, y} of the neighbor in the given direction, or null if out of bounds

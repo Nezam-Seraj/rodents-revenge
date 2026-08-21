@@ -1,0 +1,18 @@
+{
+  "id": "/rodents-revenge/",
+  "name": "Rodent's Revenge",
+  "short_name": "Rodent's",
+  "description": "A modern 3D recreation of the classic Microsoft Rodent's Revenge puzzle game. Push blocks, trap the cats, collect the cheese!",
+  "start_url": "/rodents-revenge/",
+  "scope": "/rodents-revenge/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#a83f22",
+  "theme_color": "#a83f22",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    { "src": "/rodents-revenge/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/rodents-revenge/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/rodents-revenge/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

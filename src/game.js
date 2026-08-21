@@ -77,7 +77,9 @@ export class Game {
     loadLevel(levelIndex) {
         const lvl = levels[levelIndex % levels.length];
         this.board = new Board(lvl.cols, lvl.rows);
-        this.renderer = new Renderer(this.canvas, this.board);
+        // Reuse the WebGL renderer across restarts (avoids leaking GL contexts)
+        if (this.renderer) this.renderer.setBoard(this.board, lvl.theme);
+        else this.renderer = new Renderer(this.canvas, this.board, lvl.theme);
         this.cats = [];
         this.yarnBalls = [];
         this.mouseStuck = false;
@@ -112,6 +114,11 @@ export class Game {
             if (this.board.isEmpty(x, y)) {
                 this.board.set(x, y, ENTITY.TRAP);
             }
+        }
+
+        // Place ice (floor overlay, kept separate from the entity grid)
+        for (const [x, y] of (lvl.ice || [])) {
+            this.board.setIce(x, y);
         }
 
         // Place mouse
@@ -187,7 +194,12 @@ export class Game {
 
     draw() {
         if (!this.renderer) return;
-        this.renderer.render({ mouseStuck: this.mouseStuck });
+        this.renderer.render({
+            mouse: this.mouse,
+            cats: this.cats,
+            yarnBalls: this.yarnBalls,
+            mouseStuck: this.mouseStuck,
+        });
     }
 
     // ===== INPUT =====
@@ -275,7 +287,8 @@ export class Game {
 
         switch (target) {
             case ENTITY.EMPTY:
-                this.doMove(nx, ny);
+                if (this.board.isIce(nx, ny)) this.slideMouse(nx, ny, dir);
+                else this.doMove(nx, ny);
                 break;
 
             case ENTITY.BLOCK:
@@ -318,6 +331,18 @@ export class Game {
         this.mouse.x = nx;
         this.mouse.y = ny;
         this.board.set(nx, ny, ENTITY.MOUSE);
+    }
+
+    // Slide the mouse across contiguous ice in the movement direction,
+    // stopping on the last ice cell before a non-ice cell or the edge.
+    slideMouse(nx, ny, dir) {
+        const off = DIR_OFFSETS[dir];
+        let x = nx, y = ny;
+        while (this.board.isIce(x + off.x, y + off.y)) {
+            x += off.x;
+            y += off.y;
+        }
+        this.doMove(x, y);
     }
 
     playerDie() {
@@ -439,11 +464,23 @@ export class Game {
     }
 
     moveCat(cat) {
-        // Simple chase AI: move toward mouse, prefer axis with greater distance
+        // Smart chase: BFS shortest path to the mouse (navigates walls/blocks).
+        const path = this.findPath(cat.x, cat.y, this.mouse.x, this.mouse.y);
+        if (path && path.length >= 2) {
+            const next = path[1];
+            const dir = next.x > cat.x ? 'right'
+                : next.x < cat.x ? 'left'
+                : next.y > cat.y ? 'down' : 'up';
+            this.tryCatMove(cat, dir);
+            return;
+        }
+        // Mouse unreachable (boxed in): fall back to greedy chase
+        this.greedyCatMove(cat);
+    }
+
+    greedyCatMove(cat) {
         const dx = this.mouse.x - cat.x;
         const dy = this.mouse.y - cat.y;
-
-        // Determine priorities
         let primaryDir, secondaryDir;
 
         if (Math.abs(dx) >= Math.abs(dy)) {
@@ -454,19 +491,61 @@ export class Game {
             secondaryDir = dx > 0 ? 'right' : dx < 0 ? 'left' : null;
         }
 
-        // Try primary direction
         if (primaryDir && this.tryCatMove(cat, primaryDir)) return;
-        // Try secondary direction
         if (secondaryDir && this.tryCatMove(cat, secondaryDir)) return;
 
-        // Try perpendicular directions as fallback
         const allDirs = ['up', 'down', 'left', 'right'];
         for (const d of allDirs) {
-            if (d !== primaryDir && d !== secondaryDir) {
-                if (this.tryCatMove(cat, d)) return;
+            if (d !== primaryDir && d !== secondaryDir && this.tryCatMove(cat, d)) return;
+        }
+    }
+
+    // Breadth-first search from (sx,sy) to (tx,ty). Passable = EMPTY or the
+    // MOUSE cell (the goal). Returns an array of {x,y} cells or null.
+    findPath(sx, sy, tx, ty) {
+        const board = this.board;
+        const cols = board.cols, rows = board.rows;
+        const size = cols * rows;
+        const start = sy * cols + sx;
+        const goal = ty * cols + tx;
+        if (start === goal) return [{ x: sx, y: sy }];
+
+        const dist = new Int32Array(size).fill(-1);
+        const prev = new Int32Array(size).fill(-1);
+        dist[start] = 0;
+        const queue = [start];
+        let head = 0;
+        const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+        while (head < queue.length) {
+            const cur = queue[head++];
+            if (cur === goal) break;
+            const cx = cur % cols;
+            const cy = (cur / cols) | 0;
+            for (let i = 0; i < 4; i++) {
+                const nx = cx + dirs[i][0];
+                const ny = cy + dirs[i][1];
+                if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+                const cell = board.get(nx, ny);
+                if (cell !== ENTITY.EMPTY && cell !== ENTITY.MOUSE) continue;
+                const ni = ny * cols + nx;
+                if (dist[ni] !== -1) continue;
+                dist[ni] = dist[cur] + 1;
+                prev[ni] = cur;
+                queue.push(ni);
             }
         }
-        // Cat is fully stuck - doesn't move
+        if (dist[goal] === -1) return null;
+
+        const path = [];
+        let cur = goal;
+        while (cur !== -1) {
+            path.push(cur);
+            if (cur === start) break;
+            cur = prev[cur];
+        }
+        path.reverse();
+        return path.map(i => ({ x: i % cols, y: (i / cols) | 0 }));
     }
 
     tryCatMove(cat, dir) {
@@ -571,6 +650,10 @@ export class Game {
     }
 
     nextLevel() {
+        if (this.level >= levels.length - 1) {
+            this.restart();
+            return;
+        }
         this.level++;
         this.loadLevel(this.level);
         this.state = 'playing';
@@ -619,6 +702,11 @@ export class Game {
     }
 
     showLevelComplete() {
+        const isLast = this.level >= levels.length - 1;
+        const title = document.getElementById('level-complete-title');
+        const btn = document.getElementById('nextlevel-btn');
+        if (title) title.textContent = isLast ? '🏆 YOU WIN! 🏆' : '🧀 LEVEL COMPLETE! 🧀';
+        if (btn) btn.textContent = isLast ? 'PLAY AGAIN' : 'NEXT LEVEL';
         document.getElementById('level-score').textContent = this.score;
         document.getElementById('levelcomplete-screen').classList.remove('hidden');
     }

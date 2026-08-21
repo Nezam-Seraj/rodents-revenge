@@ -35,6 +35,13 @@ body {
     background: var(--bg-dark);
     color: var(--text-primary);
     font-family: var(--font-body);
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+button {
+    touch-action: manipulation;
 }
 
 body {
@@ -114,22 +121,17 @@ body {
 /* ========== Game Canvas ========== */
 #game-container {
     flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 12px;
+    position: relative;
     width: 100%;
     min-height: 0;
+    overflow: hidden;
 }
 
 #game-canvas {
-    border-radius: var(--radius);
-    box-shadow:
-        0 0 30px rgba(0, 229, 255, 0.08),
-        0 4px 40px rgba(0, 0, 0, 0.6);
-    image-rendering: pixelated;
-    max-width: 100%;
-    max-height: 100%;
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
 }
 
 /* ========== Mobile Controls ========== */

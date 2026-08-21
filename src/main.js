@@ -46,6 +46,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Prevent double-tap / double-click zoom
+    document.addEventListener('dblclick', (e) => e.preventDefault());
+
+    // ===== Service Worker (PWA — installable + offline) =====
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker
+                .register(import.meta.env.BASE_URL + 'sw.js')
+                .catch((err) => console.warn('Service worker registration failed:', err));
+        });
+    }
+
     // Show start screen
     game.showStartScreen();
 });

@@ -1,11 +1,19 @@
 // ============================================
 // Rodent's Revenge — Level Definitions
 // ============================================
-// Each level: { cols, rows, mouse, cats, blocks, walls, sinkholes, traps, yarnSpawnInterval }
-// Coordinates: [col, row], origin top-left
+// Coordinates: [col, row], origin top-left.
+// Each level: { cols, rows, mouse, cats, blocks, walls, sinkholes, traps, ice,
+//               yarnSpawnInterval, catSpawnInterval, theme }
 
 const COLS = 23;
 const ROWS = 23;
+
+// ---- per-level colour themes (environment only; entities stay constant) ----
+export const THEMES = {
+    classic:     { bg: '#161a24', frame: '#0f1119', floorA: '#2f3a55', floorB: '#38435f', grid: '#222b40' },
+    underground: { bg: '#191225', frame: '#0f0a18', floorA: '#3a2e4e', floorB: '#463a60', grid: '#251c35' },
+    ice:         { bg: '#0c1824', frame: '#07101a', floorA: '#284058', floorB: '#31506b', grid: '#1b2e42' },
+};
 
 // Helper: generate a ring of blocks around center
 function generateBlockRing(cx, cy, innerR, outerR, holes = []) {
@@ -16,11 +24,8 @@ function generateBlockRing(cx, cy, innerR, outerR, holes = []) {
             const dy = Math.abs(y - cy);
             if (dx >= innerR || dy >= innerR) {
                 if (dx <= outerR && dy <= outerR) {
-                    // Check if this is a hole
                     const isHole = holes.some(h => h[0] === x && h[1] === y);
-                    if (!isHole) {
-                        blocks.push([x, y]);
-                    }
+                    if (!isHole) blocks.push([x, y]);
                 }
             }
         }
@@ -28,145 +33,75 @@ function generateBlockRing(cx, cy, innerR, outerR, holes = []) {
     return blocks;
 }
 
-// Helper: scatter walls around the edges
-function generateEdgeWalls(count, cols, rows, rng) {
-    const walls = [];
-    const positions = [];
-    for (let i = 0; i < cols; i++) {
-        positions.push([i, 0], [i, rows - 1]);
-    }
-    for (let j = 1; j < rows - 1; j++) {
-        positions.push([0, j], [cols - 1, j]);
-    }
-    // Deterministic shuffle
-    for (let i = positions.length - 1; i > 0; i--) {
-        const j = rng(i + 1);
-        [positions[i], positions[j]] = [positions[j], positions[i]];
-    }
-    return positions.slice(0, count);
-}
-
-function seededRng(seed) {
-    let s = seed;
-    return function (max) {
-        s = (s * 16807 + 0) % 2147483647;
-        return s % max;
+// Helper: build ice lanes (perimeter + centre plus), skipping occupied cells
+function generateIce(cols, rows, occupied) {
+    const occ = new Set(occupied.map(([x, y]) => x + ',' + y));
+    const ice = [];
+    const add = (x, y) => {
+        if (x < 0 || y < 0 || x >= cols || y >= rows) return;
+        const k = x + ',' + y;
+        if (!occ.has(k)) { occ.add(k); ice.push([x, y]); }
     };
+    for (let x = 2; x <= 20; x++) { add(x, 2); add(x, 20); }
+    for (let y = 2; y <= 20; y++) { add(2, y); add(20, y); }
+    for (let i = 9; i <= 13; i++) { add(i, 11); add(11, i); }
+    return ice;
 }
 
 export const levels = [
-    // ===== LEVEL 1 — Easy intro =====
+    // ===== LEVEL 1 — classic intro =====
     {
         cols: COLS, rows: ROWS,
         mouse: [11, 11],
         cats: [[2, 2], [20, 20]],
         blocks: generateBlockRing(11, 11, 4, 7, [
-            [11, 4], [11, 18], [4, 11], [18, 11],  // openings
+            [11, 4], [11, 18], [4, 11], [18, 11],
             [8, 8], [14, 8], [8, 14], [14, 14]
         ]),
         walls: [[0, 0], [0, 22], [22, 0], [22, 22], [5, 0], [17, 0], [5, 22], [17, 22], [0, 5], [0, 17], [22, 5], [22, 17]],
-        sinkholes: [],
-        traps: [],
-        yarnSpawnInterval: 0, // no yarn on level 1
-        catSpawnInterval: 90, // ~54 seconds — very relaxed
-    },
-
-    // ===== LEVEL 2 — Add sinkholes =====
-    {
-        cols: COLS, rows: ROWS,
-        mouse: [11, 11],
-        cats: [[1, 1], [21, 1], [1, 21]],
-        blocks: generateBlockRing(11, 11, 3, 7, [
-            [11, 4], [11, 18], [4, 11], [18, 11],
-            [7, 7], [15, 7], [7, 15], [15, 15],
-            [11, 7], [7, 11], [15, 11], [11, 15]
-        ]),
-        walls: [
-            [0, 0], [0, 22], [22, 0], [22, 22],
-            [3, 0], [10, 0], [12, 0], [19, 0],
-            [3, 22], [10, 22], [12, 22], [19, 22],
-            [0, 3], [0, 10], [0, 12], [0, 19],
-            [22, 3], [22, 10], [22, 12], [22, 19]
-        ],
-        sinkholes: [[5, 5], [17, 17]],
-        traps: [],
+        sinkholes: [], traps: [], ice: [],
         yarnSpawnInterval: 0,
-        catSpawnInterval: 70, // ~42 seconds
+        catSpawnInterval: 90,
+        theme: THEMES.classic,
     },
 
-    // ===== LEVEL 3 — Traps + Yarn =====
+    // ===== LEVEL 2 — Sinkhole Crossroads =====
     {
         cols: COLS, rows: ROWS,
         mouse: [11, 11],
-        cats: [[1, 1], [21, 1], [21, 21], [1, 21]],
-        blocks: generateBlockRing(11, 11, 3, 6, [
-            [11, 5], [11, 17], [5, 11], [17, 11],
-            [8, 8], [14, 8], [8, 14], [14, 14],
-            [11, 8], [8, 11], [14, 11], [11, 14]
-        ]),
-        walls: (() => {
-            const w = [];
-            for (let i = 0; i < COLS; i++) {
-                if (i !== 11 && i !== 5 && i !== 17) { w.push([i, 0]); w.push([i, 22]); }
-            }
-            for (let j = 1; j < ROWS - 1; j++) {
-                if (j !== 11 && j !== 5 && j !== 17) { w.push([0, j]); w.push([22, j]); }
-            }
-            return w;
-        })(),
-        sinkholes: [[3, 3], [19, 19]],
-        traps: [[6, 2], [16, 20]],
-        yarnSpawnInterval: 45, // ~27 seconds between yarn
-        catSpawnInterval: 55, // ~33 seconds
-    },
-
-    // ===== LEVEL 4 — More cats, fewer blocks =====
-    {
-        cols: COLS, rows: ROWS,
-        mouse: [11, 11],
-        cats: [[2, 2], [20, 2], [20, 20], [2, 20], [11, 2]],
-        blocks: generateBlockRing(11, 11, 3, 5, [
-            [11, 6], [11, 16], [6, 11], [16, 11],
+        cats: [[2, 2], [20, 2], [11, 20]],
+        blocks: generateBlockRing(11, 11, 4, 7, [
+            [11, 4], [11, 18], [4, 11], [18, 11],
             [8, 8], [14, 8], [8, 14], [14, 14]
         ]),
-        walls: (() => {
-            const w = [];
-            for (let i = 0; i < COLS; i++) { w.push([i, 0]); w.push([i, 22]); }
-            for (let j = 1; j < ROWS - 1; j++) { w.push([0, j]); w.push([22, j]); }
-            // Internal walls
-            w.push([5, 5], [17, 5], [5, 17], [17, 17]);
-            w.push([11, 3], [3, 11], [19, 11], [11, 19]);
-            return w;
-        })(),
-        sinkholes: [[4, 4], [18, 18], [4, 18], [18, 4]],
-        traps: [[3, 10], [19, 12], [10, 3], [12, 19]],
-        yarnSpawnInterval: 35, // ~21 seconds
-        catSpawnInterval: 42, // ~25 seconds
+        walls: [[0, 0], [0, 22], [22, 0], [22, 22], [5, 0], [17, 0], [5, 22], [17, 22], [0, 5], [0, 17], [22, 5], [22, 17],
+                [11, 0], [11, 22], [0, 11], [22, 11]],
+        sinkholes: [[5, 5], [17, 17], [5, 17], [17, 5]],
+        traps: [], ice: [],
+        yarnSpawnInterval: 0,
+        catSpawnInterval: 55,
+        theme: THEMES.underground,
     },
 
-    // ===== LEVEL 5 — Gauntlet =====
-    {
-        cols: COLS, rows: ROWS,
-        mouse: [11, 11],
-        cats: [[2, 2], [20, 2], [20, 20], [2, 20], [11, 2], [2, 11], [20, 11]],
-        blocks: generateBlockRing(11, 11, 2, 4, [
-            [11, 7], [11, 15], [7, 11], [15, 11],
+    // ===== LEVEL 3 — Frozen Gauntlet (ice + yarn) =====
+    (() => {
+        const mouse = [11, 11];
+        const cats = [[2, 2], [20, 2], [20, 20], [2, 20]];
+        const blocks = generateBlockRing(11, 11, 4, 6, [
+            [11, 5], [11, 17], [5, 11], [17, 11],
             [9, 9], [13, 9], [9, 13], [13, 13]
-        ]),
-        walls: (() => {
-            const w = [];
-            for (let i = 0; i < COLS; i++) { w.push([i, 0]); w.push([i, 22]); }
-            for (let j = 1; j < ROWS - 1; j++) { w.push([0, j]); w.push([22, j]); }
-            // Maze-like internal walls
-            for (let i = 3; i <= 19; i += 4) {
-                w.push([i, 5], [i, 17]);
-                w.push([5, i], [17, i]);
-            }
-            return w;
-        })(),
-        sinkholes: [[6, 6], [16, 16], [6, 16], [16, 6], [11, 6], [11, 16]],
-        traps: [[3, 3], [19, 19], [3, 19], [19, 3]],
-        yarnSpawnInterval: 25, // ~15 seconds
-        catSpawnInterval: 32, // ~19 seconds
-    },
+        ]);
+        const walls = [[0, 0], [0, 22], [22, 0], [22, 22]];
+        const sinkholes = [[5, 5], [17, 17]];
+        const traps = [[3, 11], [19, 11]];
+        const occupied = [...blocks, ...walls, ...sinkholes, ...traps, ...cats, mouse];
+        const ice = generateIce(COLS, ROWS, occupied);
+        return {
+            cols: COLS, rows: ROWS,
+            mouse, cats, blocks, walls, sinkholes, traps, ice,
+            yarnSpawnInterval: 40,
+            catSpawnInterval: 45,
+            theme: THEMES.ice,
+        };
+    })(),
 ];
