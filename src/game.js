@@ -53,6 +53,7 @@ export class Game {
         // Touch / swipe support
         this._touchStartX = 0;
         this._touchStartY = 0;
+        this._lastDpadTouch = 0;
         this._boundTouchStart = this.handleTouchStart.bind(this);
         this._boundTouchEnd = this.handleTouchEnd.bind(this);
     }
@@ -223,10 +224,14 @@ export class Game {
             // Use touchstart for instant response on mobile
             btn.addEventListener('touchstart', (e) => {
                 e.preventDefault();
+                this._lastDpadTouch = Date.now();
                 const dir = btn.dataset.dir;
                 if (dir) this.movePlayer(dir);
             }, { passive: false });
             btn.addEventListener('click', () => {
+                // Ignore the synthesized click that follows a touch on the same tap,
+                // otherwise one tap = two moves (esp. iOS Safari).
+                if (this._lastDpadTouch && Date.now() - this._lastDpadTouch < 500) return;
                 const dir = btn.dataset.dir;
                 if (dir) this.movePlayer(dir);
             });

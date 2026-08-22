@@ -1,5 +1,5 @@
 // Rodent's Revenge — Service Worker (offline + installable)
-const CACHE = 'rodents-revenge-v1';
+const CACHE = 'rodents-revenge-v2';
 const BASE = '/rodents-revenge/';
 
 const PRECACHE = [

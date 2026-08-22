@@ -401,3 +401,11 @@ kbd {
         font-size: 8px;
     }
 }
+
+/* Show the on-screen d-pad on any touch device (phones + tablets, any orientation) */
+@media (hover: none) and (pointer: coarse) {
+    #mobile-controls {
+        display: flex;
+        justify-content: center;
+    }
+}

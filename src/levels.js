@@ -53,7 +53,7 @@ export const levels = [
     {
         cols: COLS, rows: ROWS,
         mouse: [11, 11],
-        cats: [[2, 2], [20, 20]],
+        cats: [[2, 2]],
         blocks: generateBlockRing(11, 11, 4, 7, [
             [11, 4], [11, 18], [4, 11], [18, 11],
             [8, 8], [14, 8], [8, 14], [14, 14]
