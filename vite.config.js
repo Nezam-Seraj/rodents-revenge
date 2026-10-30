@@ -1,7 +1,9 @@
 import { defineConfig } from 'vite';
 
+const isElectron = process.env.ELECTRON === 'true' || process.env.ELECTRON_BUILD === 'true';
+
 export default defineConfig({
-    base: '/rodents-revenge/',
+    base: isElectron ? './' : '/rodents-revenge/',
     root: '.',
     publicDir: 'public',
     server: {

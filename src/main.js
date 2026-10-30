@@ -50,7 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('dblclick', (e) => e.preventDefault());
 
     // ===== Service Worker (PWA — installable + offline) =====
-    if ('serviceWorker' in navigator) {
+    if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
             navigator.serviceWorker
                 .register(import.meta.env.BASE_URL + 'sw.js')

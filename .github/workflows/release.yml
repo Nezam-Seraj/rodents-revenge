@@ -1,0 +1,68 @@
+name: Release Desktop App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Release (${{ matrix.artifact_name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: Linux
+          - os: windows-latest
+            artifact_name: Windows
+          - os: macos-latest
+            artifact_name: macOS
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web application for desktop
+        run: npm run build:electron
+
+      - name: Build Linux installer (AppImage)
+        if: matrix.os == 'ubuntu-latest'
+        run: npx electron-builder --linux AppImage --publish never
+
+      - name: Build Windows installer (NSIS)
+        if: matrix.os == 'windows-latest'
+        run: npx electron-builder --win nsis --publish never
+
+      - name: Build macOS installer (DMG)
+        if: matrix.os == 'macos-latest'
+        run: npx electron-builder --mac dmg --publish never
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist-electron/*.AppImage
+            dist-electron/*.exe
+            dist-electron/*.dmg
+            dist-electron/*.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

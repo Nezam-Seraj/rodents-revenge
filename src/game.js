@@ -5,6 +5,7 @@ import { ENTITY } from './entities.js';
 import { Board } from './board.js';
 import { Renderer } from './renderer.js';
 import { levels } from './levels.js';
+import { audio } from './audio.js';
 
 const DIR_OFFSETS = {
     up: { x: 0, y: -1 },
@@ -56,6 +57,9 @@ export class Game {
         this._lastDpadTouch = 0;
         this._boundTouchStart = this.handleTouchStart.bind(this);
         this._boundTouchEnd = this.handleTouchEnd.bind(this);
+
+        // Hit-stop freeze duration
+        this.hitStopUntil = 0;
     }
 
     // ===== INITIALIZATION =====
@@ -63,6 +67,20 @@ export class Game {
     init() {
         this.bindInput();
         this.bindMobileControls();
+
+        // Mute button in HUD
+        const muteBtn = document.getElementById('mute-btn');
+        if (muteBtn) {
+            muteBtn.textContent = audio.isMuted() ? '🔇' : '🔊';
+            muteBtn.addEventListener('click', () => {
+                const muted = audio.toggleMute();
+                muteBtn.textContent = muted ? '🔇' : '🔊';
+            });
+        }
+    }
+
+    triggerHitStop(ms = 60) {
+        this.hitStopUntil = performance.now() + ms;
     }
 
     startGame() {
@@ -160,8 +178,16 @@ export class Game {
     update() {
         if (this.state !== 'playing') return;
 
+        // Hit-stop freeze on impact
+        if (performance.now() < this.hitStopUntil) return;
+
         const now = Date.now();
         const delta = now - this.lastTick;
+
+        // Smooth frame-by-frame timer bar update
+        const tickFraction = Math.min(1, Math.max(0, delta / this.tickInterval));
+        const progress = Math.max(0, 1 - (this.catSpawnTimer + tickFraction) / this.catSpawnInterval);
+        this.updateTimerBar(progress);
 
         if (delta >= this.tickInterval) {
             this.lastTick = now;
@@ -188,8 +214,6 @@ export class Game {
                     this.spawnYarn();
                 }
             }
-
-            this.updateTimerBar();
         }
     }
 
@@ -294,11 +318,13 @@ export class Game {
             case ENTITY.EMPTY:
                 if (this.board.isIce(nx, ny)) this.slideMouse(nx, ny, dir);
                 else this.doMove(nx, ny);
+                audio.playMove();
                 break;
 
             case ENTITY.BLOCK:
                 if (this.pushBlockChain(nx, ny, dir)) {
                     this.doMove(nx, ny);
+                    audio.playMove();
                 }
                 break;
 
@@ -306,21 +332,30 @@ export class Game {
                 this.score += 50;
                 this.doMove(nx, ny);
                 this.renderer.addEffect('cheese', nx, ny, 400);
+                this.renderer.addParticles('cheese', nx, ny);
+                audio.playCheese();
                 this.updateHUD();
                 break;
 
             case ENTITY.CAT:
             case ENTITY.YARN:
+                this.renderer.triggerShake(0.35, 300);
+                this.triggerHitStop(70);
                 this.playerDie();
                 break;
 
             case ENTITY.SINKHOLE:
                 this.doMove(nx, ny);
                 this.playerStuck();
+                audio.playWarp();
+                this.renderer.addParticles('sinkhole', nx, ny);
+                this.renderer.triggerShake(0.2, 220);
                 break;
 
             case ENTITY.TRAP:
                 this.renderer.addEffect('trap', nx, ny, 400);
+                this.renderer.triggerShake(0.35, 300);
+                this.triggerHitStop(70);
                 this.board.set(nx, ny, ENTITY.EMPTY); // trap consumed
                 this.playerDie();
                 break;
@@ -352,7 +387,10 @@ export class Game {
 
     playerDie() {
         this.lives--;
+        audio.playDeath();
         this.renderer.addEffect('death', this.mouse.x, this.mouse.y, 600);
+        this.renderer.triggerShake(0.38, 320);
+        this.triggerHitStop(70);
         this.updateHUD();
 
         if (this.lives <= 0) {
@@ -403,12 +441,19 @@ export class Game {
             // Move last block to empty cell, first block disappears (mouse takes its place)
             this.board.set(cx, cy, ENTITY.BLOCK);
             this.board.set(x, y, ENTITY.EMPTY);
+            audio.playPush();
+            this.renderer.addParticles('dust', x, y, { dir });
             this.checkTrappedCats();
             return true;
         } else if (endCell === ENTITY.SINKHOLE) {
             // Block falls into sinkhole — both disappear
             this.board.set(cx, cy, ENTITY.EMPTY);
             this.board.set(x, y, ENTITY.EMPTY);
+            audio.playPush();
+            audio.playWarp();
+            this.renderer.addParticles('dust', x, y, { dir });
+            this.renderer.addParticles('sinkhole', cx, cy);
+            this.renderer.triggerShake(0.2, 200);
             return true;
         }
 
@@ -433,11 +478,16 @@ export class Game {
             // Turn cat into cheese
             this.board.set(cat.x, cat.y, ENTITY.CHEESE);
             this.renderer.addEffect('cheese', cat.x, cat.y, 500);
+            this.renderer.addParticles('poof', cat.x, cat.y);
+            this.renderer.addParticles('cheese', cat.x, cat.y);
             this.cats.splice(idx, 1);
             this.score += 100;
         }
 
         if (trapped.length > 0) {
+            audio.playCatCaught();
+            this.renderer.triggerShake(0.25, 220);
+            this.triggerHitStop(60);
             this.updateHUD();
             // Check if all cats trapped
             if (this.cats.length === 0) {
@@ -649,9 +699,59 @@ export class Game {
 
     levelComplete() {
         this.state = 'levelcomplete';
-        this.score += 200 + (this.level * 50); // level bonus
+        const bonus = 200 + (this.level * 50);
+        this.score += bonus;
         this.updateHUD();
-        this.showLevelComplete();
+        audio.playLevelComplete();
+
+        const isLast = this.level >= levels.length - 1;
+        if (isLast) {
+            setTimeout(() => {
+                this.showLevelComplete();
+            }, 800);
+            return;
+        }
+
+        // Seamless transition with fade + brief "LEVEL N" banner instead of abrupt overlay
+        this.showLevelBanner(`STAGE ${this.level + 1} CLEARED`, `LEVEL ${this.level + 1}`, `+${bonus} BONUS`);
+
+        setTimeout(() => {
+            const fade = document.getElementById('screen-fade');
+            if (fade) {
+                fade.classList.remove('hidden');
+                fade.classList.add('active');
+            }
+            setTimeout(() => {
+                this.level++;
+                this.loadLevel(this.level);
+                this.updateHUD();
+                this.showLevelBanner(`STAGE ${this.level + 1}`, `LEVEL ${this.level + 1}`, 'GET READY!');
+                if (fade) {
+                    fade.classList.remove('active');
+                    setTimeout(() => fade.classList.add('hidden'), 350);
+                }
+                this.state = 'playing';
+            }, 400);
+        }, 1300);
+    }
+
+    showLevelBanner(tag, title, sub) {
+        const banner = document.getElementById('level-banner');
+        const tagEl = document.getElementById('banner-tag');
+        const titleEl = document.getElementById('banner-title');
+        const subEl = document.getElementById('banner-sub');
+        if (banner && titleEl) {
+            if (tagEl) tagEl.textContent = tag;
+            titleEl.textContent = title;
+            if (subEl) subEl.textContent = sub;
+            banner.classList.remove('hidden');
+            banner.style.animation = 'none';
+            void banner.offsetHeight; // trigger reflow
+            banner.style.animation = '';
+            setTimeout(() => {
+                banner.classList.add('hidden');
+            }, 1500);
+        }
     }
 
     nextLevel() {
@@ -686,11 +786,13 @@ export class Game {
         if (livesEl) livesEl.textContent = '🐭'.repeat(Math.max(0, this.lives));
     }
 
-    updateTimerBar() {
+    updateTimerBar(progress) {
         const bar = document.getElementById('timer-bar');
         if (bar) {
-            const progress = 1 - (this.catSpawnTimer / this.catSpawnInterval);
-            bar.style.width = (progress * 100) + '%';
+            if (progress === undefined) {
+                progress = Math.max(0, 1 - (this.catSpawnTimer / this.catSpawnInterval));
+            }
+            bar.style.transform = `scaleX(${progress})`;
         }
     }
 

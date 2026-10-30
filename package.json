@@ -3,15 +3,59 @@
   "version": "1.0.0",
   "description": "Rodent's Revenge - Classic Windows Game Recreation",
   "type": "module",
+  "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:electron": "ELECTRON=true vite build",
+    "electron": "electron .",
+    "electron:pack": "npm run build:electron && electron-builder --dir",
+    "electron:dist": "npm run build:electron && electron-builder",
+    "electron:dist:linux": "npm run build:electron && electron-builder --linux AppImage"
+  },
+  "build": {
+    "appId": "com.nezam.rodentsrevenge",
+    "productName": "Rodent's Revenge",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "public/icons/icon-512.png",
+      "category": "public.app-category.games"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "public/icons/icon-512.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "public/icons/icon-512.png",
+      "category": "Game"
+    }
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "electron": "^45.1.0",
+    "electron-builder": "^26.18.0",
     "vite": "^7.3.1"
   },
   "dependencies": {

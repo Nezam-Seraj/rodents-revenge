@@ -75,6 +75,12 @@ export class Renderer {
 
         // --- camera ---
         this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 250);
+        this.baseCameraPos = new THREE.Vector3();
+
+        // Screen shake state
+        this.shakeTime = 0;
+        this.shakeDuration = 0;
+        this.shakeIntensity = 0;
 
         // --- lights ---
         this.scene.add(new THREE.AmbientLight(0xdfe6f2, 1.0));
@@ -97,9 +103,11 @@ export class Renderer {
         this.floorGroup = new THREE.Group();
         this.iceGroup = new THREE.Group();
         this.entities = new THREE.Group();
+        this.particleGroup = new THREE.Group();
         this.scene.add(this.floorGroup);
         this.scene.add(this.iceGroup);
         this.scene.add(this.entities);
+        this.scene.add(this.particleGroup);
 
         // --- per-frame bookkeeping ---
         this.staticMeshes = new Map();   // 'x,y' -> {mesh, x, y, type, born}
@@ -107,6 +115,9 @@ export class Renderer {
         this.yarnMeshes = new Map();     // yarn object -> {mesh, target}
         this.mouseMesh = null;           // {mesh, target}
         this.activeFx = [];              // transient ring/spark effects
+        this.particles = [];             // physics particles
+        this.sinkholeCoords = [];        // cached sinkhole [x, y] list
+        this.lastSinkholeSwirl = 0;
         this.last = performance.now();
 
         this.setBoard(board, theme);
@@ -121,16 +132,28 @@ export class Renderer {
         this.theme = theme || DEFAULT_THEME;
         this.scene.background = new THREE.Color(this.theme.bg);
         this.clearEntities();
+        this.clearParticles();
+        this.cacheSinkholes();
         this.buildFloor();
         this.buildIceTiles();
         this.fitCamera();
     }
 
+    cacheSinkholes() {
+        this.sinkholeCoords = [];
+        if (!this.board) return;
+        for (let x = 0; x < this.board.cols; x++) {
+            for (let y = 0; y < this.board.rows; y++) {
+                if (this.board.get(x, y) === ENTITY.SINKHOLE) {
+                    this.sinkholeCoords.push({ x, y });
+                }
+            }
+        }
+    }
+
     clearEntities() {
         const dispose = (obj) => {
             obj.traverse(o => {
-                // Dispose geometry only — materials are shared via matCache,
-                // so disposing them would break meshes on a restart.
                 if (o.isMesh || o.isLine) {
                     o.geometry && o.geometry.dispose();
                 }
@@ -150,8 +173,16 @@ export class Renderer {
         this.activeFx = [];
     }
 
+    clearParticles() {
+        while (this.particleGroup.children.length > 0) {
+            const p = this.particleGroup.children.pop();
+            if (p.geometry) p.geometry.dispose();
+            if (p.material && p.material.dispose) p.material.dispose();
+        }
+        this.particles = [];
+    }
+
     buildFloor() {
-        // wipe previous floor (geometry only; the frame material is shared)
         while (this.floorGroup.children.length) {
             const c = this.floorGroup.children.pop();
             c.geometry && c.geometry.dispose();
@@ -238,7 +269,7 @@ export class Renderer {
     }
 
     // ------------------------------------------------------------
-    // Camera
+    // Camera & Screen Shake
     // ------------------------------------------------------------
     fitCamera() {
         const cols = this.board.cols;
@@ -252,8 +283,6 @@ export class Renderer {
             new THREE.Vector3(hw, 0, hd),
             new THREE.Vector3(-hw, 0, hd),
         ];
-        // Binary-search the smallest camera distance that keeps every board
-        // corner inside VIEW_FILL of the viewport → board fills the screen.
         let lo = 4, hi = 400;
         for (let i = 0; i < 45; i++) {
             const D = (lo + hi) / 2;
@@ -274,6 +303,13 @@ export class Renderer {
         this.camera.near = Math.max(0.05, D * 0.05);
         this.camera.far = D * 6;
         this.camera.updateProjectionMatrix();
+        this.baseCameraPos.copy(this.camera.position);
+    }
+
+    triggerShake(intensity = 0.25, duration = 250) {
+        this.shakeIntensity = intensity;
+        this.shakeDuration = duration;
+        this.shakeTime = duration;
     }
 
     resize() {
@@ -290,8 +326,6 @@ export class Renderer {
     // ------------------------------------------------------------
     cellPos(x, y) {
         const wx = (x - this.board.cols / 2 + 0.5) * CELL;
-        // y is inverted so board row 0 (top of the level) maps to -Z (far from
-        // the camera) and appears at the TOP of the screen — keeps "up" = up.
         const wz = (y - this.board.rows / 2 + 0.5) * CELL;
         return new THREE.Vector3(wx, 0, wz);
     }
@@ -311,7 +345,6 @@ export class Renderer {
         const box = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.84, 0.62, CELL * 0.84), mat(COLORS.block));
         box.position.y = 0.31;
         g.add(box);
-        // cross-beam "crate" band for a chunkier look
         const band = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.86, 0.12, CELL * 0.86), mat('#b85434', 0.6));
         band.position.y = 0.31;
         g.add(band);
@@ -339,7 +372,7 @@ export class Renderer {
         const innerGeo = new THREE.SphereGeometry(0.085, 12, 10);
         const il = new THREE.Mesh(innerGeo, mat(COLORS.pink)); il.position.set(-0.2, 0.68, 0.02); g.add(il);
         const ir = new THREE.Mesh(innerGeo, mat(COLORS.pink)); ir.position.set(0.2, 0.68, 0.02); g.add(ir);
-        // big expressive eyes (white sclera + pupil + highlight)
+        // big expressive eyes
         const scleraG = new THREE.SphereGeometry(0.07, 12, 10);
         const sclera = mat(COLORS.white, 0.3);
         const el = new THREE.Mesh(scleraG, sclera); el.position.set(-0.09, 0.54, 0.20); g.add(el);
@@ -366,11 +399,11 @@ export class Renderer {
         const nose = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 8), mat(COLORS.pink, 0.5));
         nose.position.set(0, 0.49, 0.23);
         g.add(nose);
-        // hero ahoge (little curl on top)
+        // ahoge curl
         const ahoge = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.016, 6, 12, Math.PI * 1.2), gold);
         ahoge.position.set(0, 0.76, -0.02);
         g.add(ahoge);
-        // tail (curls behind, -Z)
+        // tail
         const tail = new THREE.Mesh(
             new THREE.TorusGeometry(0.15, 0.045, 8, 14, Math.PI * 1.1),
             mat(COLORS.mouseDark)
@@ -378,6 +411,13 @@ export class Renderer {
         tail.rotation.x = Math.PI * 0.85;
         tail.position.set(0, 0.34, -0.32);
         g.add(tail);
+
+        g.userData = {
+            eyes: [el, er, pl, pr, hll, hlr],
+            tail: tail,
+            ahoge: ahoge
+        };
+
         shadeMeshes(g);
         return g;
     }
@@ -386,7 +426,7 @@ export class Renderer {
         const g = new THREE.Group();
         const fur = mat(COLORS.cat);
         const furDark = mat(COLORS.catDark);
-        // body (bigger, hunched for presence)
+        // body
         const body = new THREE.Mesh(new THREE.SphereGeometry(0.38, 24, 18), fur);
         body.scale.set(0.95, 0.82, 1.15);
         body.position.y = 0.36;
@@ -407,17 +447,17 @@ export class Renderer {
         const eyeG = new THREE.SphereGeometry(0.06, 12, 10);
         const el = new THREE.Mesh(eyeG, eyeGlow); el.position.set(-0.12, 0.60, 0.22); g.add(el);
         const er = new THREE.Mesh(eyeG, eyeGlow); er.position.set(0.12, 0.60, 0.22); g.add(er);
-        // black slitted pupils
+        // slitted pupils
         const slitG = new THREE.SphereGeometry(0.03, 8, 8);
         const slit = mat(COLORS.eye, 0.2);
         const pl = new THREE.Mesh(slitG, slit); pl.scale.set(0.45, 1.8, 0.45); pl.position.set(-0.12, 0.60, 0.28); g.add(pl);
         const pr = new THREE.Mesh(slitG, slit); pr.scale.set(0.45, 1.8, 0.45); pr.position.set(0.12, 0.60, 0.28); g.add(pr);
-        // angry slanted brows (inner ends lowered = scowl)
+        // angry slanted brows
         const browG = new THREE.BoxGeometry(0.13, 0.028, 0.03);
         const brow = mat('#453e50', 0.4);
         const bl = new THREE.Mesh(browG, brow); bl.position.set(-0.14, 0.71, 0.22); bl.rotation.z = -0.5; g.add(bl);
         const br = new THREE.Mesh(browG, brow); br.position.set(0.14, 0.71, 0.22); br.rotation.z = 0.5; g.add(br);
-        // muzzle (cream) with snarl fangs
+        // muzzle with fangs
         const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 10), mat(COLORS.catCream));
         muzzle.scale.set(1, 0.6, 0.7);
         muzzle.position.set(0, 0.47, 0.20);
@@ -428,7 +468,7 @@ export class Renderer {
         const fang = mat(COLORS.white, 0.3);
         const fl = new THREE.Mesh(fangG, fang); fl.position.set(-0.05, 0.41, 0.28); fl.rotation.x = Math.PI; g.add(fl);
         const fr = new THREE.Mesh(fangG, fang); fr.position.set(0.05, 0.41, 0.28); fr.rotation.x = Math.PI; g.add(fr);
-        // tail (curled, -Z)
+        // tail
         const tail = new THREE.Mesh(
             new THREE.TorusGeometry(0.18, 0.05, 8, 14, Math.PI * 1.2),
             furDark
@@ -436,12 +476,17 @@ export class Renderer {
         tail.rotation.x = Math.PI * 0.8;
         tail.position.set(0, 0.4, -0.38);
         g.add(tail);
+
+        g.userData = {
+            eyes: [el, er, pl, pr],
+            tail: tail
+        };
+
         shadeMeshes(g);
         return g;
     }
 
     buildCheese() {
-        // wedge of cheese (triangular prism lying flat)
         const g = new THREE.Group();
         const wedge = new THREE.Mesh(
             new THREE.CylinderGeometry(0.42, 0.42, 0.28, 3),
@@ -468,10 +513,8 @@ export class Renderer {
         const g = new THREE.Group();
         const base = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.07, 0.52), mat(COLORS.trapDark));
         base.position.y = 0.035; g.add(base);
-        // snap bar
         const bar = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.05, 0.52), mat('#c9c2b4', 0.4));
         bar.position.set(-0.24, 0.12, 0); g.add(bar);
-        // red warning beacon
         const beacon = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.22, 4), mat(COLORS.trap));
         beacon.position.set(0.22, 0.16, 0); g.add(beacon);
         shadeMeshes(g);
@@ -510,15 +553,16 @@ export class Renderer {
     }
 
     // ------------------------------------------------------------
-    // Effects
+    // Effects & Particles
     // ------------------------------------------------------------
-    addEffect(type, x, y, duration = 500) {
+    addEffect(type, x, y, duration = 480) {
         let color = 0xffd23f;
         if (type === 'death' || type === 'trap') color = 0xff4060;
-        else if (type === 'stuck') return; // handled via mouseStuck state
+        else if (type === 'stuck') return;
+
         const ring = new THREE.Mesh(
-            new THREE.RingGeometry(0.28, 0.4, 32),
-            new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
+            new THREE.RingGeometry(0.25, 0.38, 32),
+            new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, side: THREE.DoubleSide })
         );
         ring.rotation.x = -Math.PI / 2;
         const pos = this.cellPos(x, y);
@@ -526,6 +570,145 @@ export class Renderer {
         ring.position.copy(pos);
         this.entities.add(ring);
         this.activeFx.push({ mesh: ring, born: performance.now(), duration, kind: 'ring' });
+    }
+
+    /** Burst particles of various types */
+    addParticles(type, x, y, options = {}) {
+        const center = this.cellPos(x, y);
+        const count = options.count || (type === 'cheese' ? 9 : type === 'dust' ? 7 : type === 'poof' ? 12 : 10);
+
+        for (let i = 0; i < count; i++) {
+            let mesh, vx, vy, vz, maxLife, gravity = -9.8, drag = 0.95;
+
+            if (type === 'cheese') {
+                // Golden cheese crumbs popping upward and outward
+                const size = 0.04 + Math.random() * 0.04;
+                mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), mat(COLORS.cheese, 0.5));
+                mesh.position.set(center.x + (Math.random() - 0.5) * 0.3, 0.22, center.z + (Math.random() - 0.5) * 0.3);
+                const angle = Math.random() * Math.PI * 2;
+                const spd = 1.2 + Math.random() * 2.2;
+                vx = Math.cos(angle) * spd;
+                vy = 2.2 + Math.random() * 2.5;
+                vz = Math.sin(angle) * spd;
+                maxLife = 400 + Math.random() * 200;
+            } else if (type === 'dust') {
+                // Low floor dust puffed around block push
+                const r = 0.05 + Math.random() * 0.04;
+                const dMat = new THREE.MeshStandardMaterial({
+                    color: 0x8a7f72, transparent: true, opacity: 0.7, roughness: 0.9
+                });
+                mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 8), dMat);
+                mesh.position.set(center.x + (Math.random() - 0.5) * 0.4, 0.08, center.z + (Math.random() - 0.5) * 0.4);
+                const angle = Math.random() * Math.PI * 2;
+                const spd = 0.8 + Math.random() * 1.4;
+                vx = Math.cos(angle) * spd;
+                vy = 0.4 + Math.random() * 0.6;
+                vz = Math.sin(angle) * spd;
+                gravity = -1.2;
+                maxLife = 320 + Math.random() * 150;
+            } else if (type === 'poof') {
+                // Cartoon cloud puff spheres for trapped cat
+                const r = 0.10 + Math.random() * 0.09;
+                const pMat = new THREE.MeshStandardMaterial({
+                    color: 0xf5f0e6, transparent: true, opacity: 0.85, roughness: 0.4
+                });
+                mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 10), pMat);
+                mesh.position.set(center.x + (Math.random() - 0.5) * 0.25, 0.3 + (Math.random() - 0.5) * 0.2, center.z + (Math.random() - 0.5) * 0.25);
+                const angle = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+                const spd = 1.4 + Math.random() * 1.8;
+                vx = Math.cos(angle) * spd;
+                vy = 1.0 + Math.random() * 1.5;
+                vz = Math.sin(angle) * spd;
+                gravity = -1.5;
+                maxLife = 420 + Math.random() * 180;
+            } else if (type === 'sinkhole') {
+                // Violet vortex particles spiraling into sinkhole
+                const r = 0.04 + Math.random() * 0.03;
+                const sMat = new THREE.MeshBasicMaterial({
+                    color: 0x9b5de5, transparent: true, opacity: 0.85
+                });
+                mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 8), sMat);
+                const initAngle = Math.random() * Math.PI * 2;
+                const initRadius = 0.38 + Math.random() * 0.15;
+                mesh.position.set(center.x + Math.cos(initAngle) * initRadius, 0.12, center.z + Math.sin(initAngle) * initRadius);
+                vx = -Math.cos(initAngle) * 0.8 - Math.sin(initAngle) * 1.5;
+                vy = -0.4;
+                vz = -Math.sin(initAngle) * 0.8 + Math.cos(initAngle) * 1.5;
+                gravity = -0.8;
+                maxLife = 450;
+            }
+
+            if (mesh) {
+                this.particleGroup.add(mesh);
+                this.particles.push({
+                    mesh, vx, vy, vz, gravity, drag,
+                    born: performance.now(),
+                    maxLife,
+                    type,
+                    initScale: mesh.scale.x
+                });
+            }
+        }
+    }
+
+    updateParticles(now, dt) {
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            const p = this.particles[i];
+            const age = now - p.born;
+            const prog = age / p.maxLife;
+
+            if (prog >= 1) {
+                this.particleGroup.remove(p.mesh);
+                p.mesh.geometry && p.mesh.geometry.dispose();
+                p.mesh.material && p.mesh.material.dispose();
+                this.particles.splice(i, 1);
+                continue;
+            }
+
+            // Physics update
+            p.vy += p.gravity * dt;
+            p.vx *= Math.pow(p.drag, dt * 60);
+            p.vz *= Math.pow(p.drag, dt * 60);
+
+            p.mesh.position.x += p.vx * dt;
+            p.mesh.position.y += p.vy * dt;
+            p.mesh.position.z += p.vz * dt;
+
+            // Don't let particles fall endlessly below floor
+            if (p.mesh.position.y < 0.02 && p.type !== 'sinkhole') {
+                p.mesh.position.y = 0.02;
+                p.vy = -p.vy * 0.3; // tiny bounce
+                p.vx *= 0.7;
+                p.vz *= 0.7;
+            }
+
+            // Eased scale and fade
+            const easeOut = 1 - Math.pow(1 - prog, 2);
+            if (p.type === 'poof') {
+                const s = p.initScale * (0.8 + easeOut * 1.4);
+                p.mesh.scale.setScalar(s);
+            } else if (p.type === 'dust') {
+                const s = p.initScale * (0.6 + easeOut * 1.2);
+                p.mesh.scale.setScalar(s);
+            } else {
+                const s = p.initScale * (1 - prog * 0.7);
+                p.mesh.scale.setScalar(s);
+            }
+
+            if (p.mesh.material) {
+                p.mesh.material.opacity = Math.max(0, 0.9 * (1 - prog));
+            }
+        }
+
+        // Ambient gentle swirling on sinkholes
+        if (this.sinkholeCoords.length > 0 && now - this.lastSinkholeSwirl > 160) {
+            this.lastSinkholeSwirl = now;
+            for (const s of this.sinkholeCoords) {
+                if (Math.random() < 0.45) {
+                    this.addParticles('sinkhole', s.x, s.y, { count: 1 });
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------
@@ -536,11 +719,27 @@ export class Renderer {
         const dt = Math.min(0.05, (now - this.last) / 1000);
         this.last = now;
 
+        // Apply screen shake decay
+        if (this.shakeTime > 0) {
+            this.shakeTime -= dt * 1000;
+            const p = Math.max(0, this.shakeTime / this.shakeDuration);
+            const ox = (Math.random() * 2 - 1) * this.shakeIntensity * p;
+            const oy = (Math.random() * 2 - 1) * this.shakeIntensity * p;
+            this.camera.position.set(
+                this.baseCameraPos.x + ox,
+                this.baseCameraPos.y + oy,
+                this.baseCameraPos.z
+            );
+        } else if (this.baseCameraPos.lengthSq() > 0) {
+            this.camera.position.copy(this.baseCameraPos);
+        }
+
         this.syncStatic(now);
         this.syncMouse(state, dt);
         this.syncCats(state, dt);
         this.syncYarn(state, dt);
         this.updateFx(now, dt);
+        this.updateParticles(now, dt);
         this.updateStuckRing(state, now);
 
         this.renderer.render(this.scene, this.camera);
@@ -556,12 +755,10 @@ export class Renderer {
 
     syncStatic(now) {
         const board = this.board;
-        // remove stale
         for (const [key, rec] of this.staticMeshes) {
             const [x, y] = key.split(',').map(Number);
             if (board.get(x, y) !== rec.type) this.removeStatic(key);
         }
-        // add / refresh
         for (let x = 0; x < board.cols; x++) {
             for (let y = 0; y < board.rows; y++) {
                 const t = board.get(x, y);
@@ -576,7 +773,6 @@ export class Renderer {
                 }
             }
         }
-        // spawn "pop" scale-in for recently created meshes
         this.staticMeshes.forEach(rec => {
             const age = (now - rec.born) / 1000;
             const s = age < 0.16 ? 0.6 + 0.4 * (age / 0.16) : 1;
@@ -584,21 +780,113 @@ export class Renderer {
         });
     }
 
-    glideTo(rec, target, dt, k) {
-        // snap for large jumps (respawn teleport)
+    glideTo(rec, target, dt, k, isMouse = false) {
+        if (!rec.lastTarget) rec.lastTarget = target.clone();
+        if (!rec.startPos) rec.startPos = rec.mesh.position.clone();
+
+        // Detect new move destination
+        if (rec.lastTarget.distanceTo(target) > 0.05) {
+            rec.startPos.copy(rec.mesh.position);
+            rec.totalDist = Math.max(0.2, rec.startPos.distanceTo(target));
+            rec.lastTarget.copy(target);
+
+            // Compute facing rotation vector
+            const dx = target.x - rec.startPos.x;
+            const dz = target.z - rec.startPos.z;
+            if (Math.hypot(dx, dz) > 0.05) {
+                rec.targetRotY = Math.atan2(dx, dz);
+            }
+        }
+
+        // Snap for large jumps (respawn teleport)
         if (rec.mesh.position.distanceTo(target) > 4 * CELL) {
             rec.mesh.position.copy(target);
+            rec.startPos.copy(target);
+            rec.lastTarget.copy(target);
             return;
         }
+
         const t = 1 - Math.exp(-dt * k);
-        rec.mesh.position.lerp(target, t);
-        // gentle hop while moving
-        const moving = rec.mesh.position.distanceTo(target) > 0.02;
-        const baseY = 0;
+        rec.mesh.position.x += (target.x - rec.mesh.position.x) * t;
+        rec.mesh.position.z += (target.z - rec.mesh.position.z) * t;
+
+        const distRemaining = Math.hypot(target.x - rec.mesh.position.x, target.z - rec.mesh.position.z);
+        const moving = distRemaining > 0.025;
+
+        // Rotate character toward movement vector (shortest angular distance)
+        if (rec.targetRotY !== undefined) {
+            if (rec.currentRotY === undefined) rec.currentRotY = rec.mesh.rotation.y;
+            let diff = rec.targetRotY - rec.currentRotY;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            rec.currentRotY += diff * (1 - Math.exp(-dt * 15));
+            rec.mesh.rotation.y = rec.currentRotY;
+        }
+
+        const now = performance.now();
+
         if (moving) {
-            rec.mesh.position.y = baseY + Math.abs(Math.sin(performance.now() * 0.012 + rec.mesh.position.x)) * 0.1;
+            // Smooth sine hop arc (zero sharp floor bounce!)
+            const total = rec.totalDist || CELL;
+            const prog = Math.max(0, Math.min(1, 1 - distRemaining / total));
+            const maxHop = isMouse ? 0.22 : 0.14;
+            rec.mesh.position.y = Math.sin(prog * Math.PI) * maxHop;
+
+            // Squash on move-start, stretch mid-glide, ease to rest
+            let targetSy = 1;
+            let targetSxz = 1;
+            if (prog < 0.22) {
+                const p = Math.sin((prog / 0.22) * Math.PI);
+                targetSy = 1 - 0.14 * p;
+                targetSxz = 1 + 0.08 * p;
+            } else if (prog < 0.85) {
+                const p = Math.sin(((prog - 0.22) / 0.63) * Math.PI);
+                targetSy = 1 + 0.16 * p;
+                targetSxz = 1 - 0.08 * p;
+            }
+            const scaleLerp = 1 - Math.exp(-dt * 18);
+            rec.mesh.scale.y += (targetSy - rec.mesh.scale.y) * scaleLerp;
+            rec.mesh.scale.x += (targetSxz - rec.mesh.scale.x) * scaleLerp;
+            rec.mesh.scale.z += (targetSxz - rec.mesh.scale.z) * scaleLerp;
+
+            // Restore eyes if previously blinking
+            if (rec.mesh.userData && rec.mesh.userData.eyes) {
+                rec.mesh.userData.eyes.forEach(e => { e.scale.y = 1; });
+            }
         } else {
-            rec.mesh.position.y = baseY;
+            // Idle life: subtle bob + breathing
+            const bobSeed = rec.bobSeed || (rec.bobSeed = Math.random() * 10);
+            const idleBob = Math.sin(now * 0.004 + bobSeed) * 0.02;
+            rec.mesh.position.y = idleBob;
+
+            const targetSy = 1 + idleBob * 0.5;
+            const targetSxz = 1 - idleBob * 0.25;
+            const scaleLerp = 1 - Math.exp(-dt * 10);
+            rec.mesh.scale.y += (targetSy - rec.mesh.scale.y) * scaleLerp;
+            rec.mesh.scale.x += (targetSxz - rec.mesh.scale.x) * scaleLerp;
+            rec.mesh.scale.z += (targetSxz - rec.mesh.scale.z) * scaleLerp;
+
+            // Tail wag
+            if (rec.mesh.userData && rec.mesh.userData.tail) {
+                rec.mesh.userData.tail.rotation.z = Math.sin(now * 0.005 + bobSeed) * 0.14;
+            }
+
+            // Occasional blink
+            if (rec.mesh.userData && rec.mesh.userData.eyes) {
+                if (!rec.nextBlink) rec.nextBlink = now + 1500 + Math.random() * 3000;
+                if (now > rec.nextBlink) {
+                    const blinkAge = now - rec.nextBlink;
+                    if (blinkAge < 120) {
+                        const blinkP = Math.sin((blinkAge / 120) * Math.PI);
+                        rec.mesh.userData.eyes.forEach(e => {
+                            e.scale.y = Math.max(0.08, 1 - 0.92 * blinkP);
+                        });
+                    } else {
+                        rec.mesh.userData.eyes.forEach(e => { e.scale.y = 1; });
+                        rec.nextBlink = now + 2500 + Math.random() * 4000;
+                    }
+                }
+            }
         }
     }
 
@@ -610,12 +898,11 @@ export class Renderer {
             this.entities.add(this.mouseMesh.mesh);
         }
         const target = this.cellPos(m.x, m.y);
-        this.glideTo(this.mouseMesh, target, dt, 14);
+        this.glideTo(this.mouseMesh, target, dt, 14, true);
     }
 
     syncCats(state, dt) {
         const cats = state.cats || [];
-        // remove trapped/removed cats
         for (const [catObj, rec] of this.catMeshes) {
             if (!cats.includes(catObj)) {
                 rec.mesh.traverse(o => { if (o.isMesh) o.geometry && o.geometry.dispose(); });
@@ -631,7 +918,7 @@ export class Renderer {
             }
             const rec = this.catMeshes.get(cat);
             const target = this.cellPos(cat.x, cat.y);
-            this.glideTo(rec, target, dt, 9);
+            this.glideTo(rec, target, dt, 9, false);
         }
     }
 
@@ -652,7 +939,7 @@ export class Renderer {
             }
             const rec = this.yarnMeshes.get(y);
             const target = this.cellPos(y.x, y.y);
-            this.glideTo(rec, target, dt, 11);
+            this.glideTo(rec, target, dt, 11, false);
         }
     }
 
@@ -667,9 +954,11 @@ export class Renderer {
                 this.activeFx.splice(i, 1);
                 continue;
             }
-            const s = 0.5 + prog * 1.9;
+            // Cubic ease-out on ring effects instead of linear scale
+            const easeOut = 1 - Math.pow(1 - prog, 3);
+            const s = 0.4 + easeOut * 2.2;
             f.mesh.scale.setScalar(s);
-            f.mesh.material.opacity = 0.9 * (1 - prog);
+            f.mesh.material.opacity = Math.max(0, 0.95 * (1 - easeOut));
         }
     }
 
